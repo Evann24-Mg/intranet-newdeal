@@ -96,8 +96,8 @@ jobs:
   notify:
     name: Notification email
     runs-on: ubuntu-latest
-    needs: [scan-bloquant, deploy-prod]
-    if: always()
+    needs: [build-slim, scan-bloquant]
+    if: false
     steps:
       - name: Envoi email notification
         uses: dawidd6/action-send-mail@v3
