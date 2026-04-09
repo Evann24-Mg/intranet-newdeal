@@ -1,17 +1,14 @@
-name: CD - Scan + Deploy (prod)
+name: CD - Scan Deploy (prod)
 
 on:
   push:
     branches:
       - prod
 
-env:
-  CONTAINER_NAME: intranet-newdeal-prod
-
 jobs:
 
   scan:
-    name: Scan securite avant deploiement
+    name: "Job 1 - Scan securite avant deploiement"
     runs-on: ubuntu-latest
     steps:
       - name: Connexion Docker Hub
@@ -20,10 +17,10 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Pull image de production
+      - name: Pull image depuis Docker Hub
         run: docker pull ${{ secrets.DOCKERHUB_USERNAME }}/intranet-newdeal:dev-latest
 
-      - name: Scan Trivy - image production
+      - name: Scan Trivy image de production
         uses: aquasecurity/trivy-action@master
         with:
           image-ref: ${{ secrets.DOCKERHUB_USERNAME }}/intranet-newdeal:dev-latest
@@ -33,11 +30,9 @@ jobs:
           ignore-unfixed: true
 
   deploy:
-    name: Deploiement sur runner_prod port 80
-    runs-on: runner_prod
+    name: "Job 2 - Deploiement sur runner_prod port 80"
+    runs-on: ubuntu-latest
     needs: scan
-    environment:
-      name: production
     steps:
       - name: Connexion Docker Hub
         uses: docker/login-action@v3
@@ -49,16 +44,14 @@ jobs:
         run: docker pull ${{ secrets.DOCKERHUB_USERNAME }}/intranet-newdeal:dev-latest
 
       - name: Arreter ancien conteneur
-        run: |
-          docker stop intranet-newdeal-prod || true
-          docker rm intranet-newdeal-prod || true
+        run: docker stop intranet-newdeal-prod || true && docker rm intranet-newdeal-prod || true
 
-      - name: Demarrer nouveau conteneur port 80
+      - name: Demarrer conteneur sur port 80
         run: |
           docker run -d \
             --name intranet-newdeal-prod \
             --restart always \
-            -p 80:80 \
+            -p 8080:80 \
             ${{ secrets.DOCKERHUB_USERNAME }}/intranet-newdeal:dev-latest
 
       - name: Verification conteneur actif
