@@ -1,0 +1,122 @@
+name: Evolution - Slim + CRITICAL bloquant + Email
+
+on:
+  push:
+    branches:
+      - dev
+      - prod
+
+jobs:
+
+  build-slim:
+    name: Build nginx:alpine3.23-slim
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/dev'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Remplacer image par version slim
+        run: sed -i 's|FROM nginx:alpine3.23$|FROM nginx:alpine3.23-slim|' Dockerfile
+
+      - name: Connexion Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build et push image slim
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/intranet-newdeal:slim-latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/intranet-newdeal:slim-${{ github.sha }}
+
+  scan-bloquant:
+    name: Scan BLOQUANT si CRITICAL
+    runs-on: ubuntu-latest
+    needs: build-slim
+    if: github.ref == 'refs/heads/dev'
+    steps:
+      - name: Connexion Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Scan Trivy - BLOQUE si CRITICAL detecte
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ secrets.DOCKERHUB_USERNAME }}/intranet-newdeal:slim-latest
+          format: table
+          severity: CRITICAL
+          exit-code: 1
+          ignore-unfixed: true
+
+      - name: Scan informatif HIGH et MEDIUM
+        if: always()
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ secrets.DOCKERHUB_USERNAME }}/intranet-newdeal:slim-latest
+          format: table
+          severity: HIGH,MEDIUM
+          exit-code: 0
+          ignore-unfixed: true
+
+  deploy-prod:
+    name: Deploy production
+    runs-on: runner_prod
+    if: github.ref == 'refs/heads/prod'
+    steps:
+      - name: Connexion Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Scan CRITIQUE avant deploiement prod
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ secrets.DOCKERHUB_USERNAME }}/intranet-newdeal:slim-latest
+          format: table
+          severity: CRITICAL
+          exit-code: 1
+          ignore-unfixed: true
+
+      - name: Deployer conteneur slim port 80
+        run: |
+          docker pull ${{ secrets.DOCKERHUB_USERNAME }}/intranet-newdeal:slim-latest
+          docker stop intranet-newdeal-prod || true
+          docker rm intranet-newdeal-prod || true
+          docker run -d --name intranet-newdeal-prod --restart always -p 80:80 ${{ secrets.DOCKERHUB_USERNAME }}/intranet-newdeal:slim-latest
+          docker ps | grep intranet-newdeal-prod
+
+  notify:
+    name: Notification email
+    runs-on: ubuntu-latest
+    needs: [scan-bloquant, deploy-prod]
+    if: always()
+    steps:
+      - name: Envoi email notification
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 587
+          secure: false
+          username: ${{ secrets.MAIL_USERNAME }}
+          password: ${{ secrets.MAIL_PASSWORD }}
+          subject: "Pipeline Intranet NewDeal - Run ${{ github.run_number }} - ${{ job.status }}"
+          to: ${{ secrets.MAIL_RECIPIENT }}
+          from: "CI/CD NewDeal <${{ secrets.MAIL_USERNAME }}>"
+          body: |
+            Pipeline GitHub Actions termine.
+
+            Statut   : ${{ job.status }}
+            Branche  : ${{ github.ref_name }}
+            Commit   : ${{ github.sha }}
+            Auteur   : ${{ github.actor }}
+            Run n    : ${{ github.run_number }}
+
+            Lien : ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
